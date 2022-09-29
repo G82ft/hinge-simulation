@@ -173,7 +173,7 @@ class Link:
             d: float = self.length - dist
             if not hin1.is_fixed:
                 # noinspection PyTypeChecker
-                self.hinges[0].position = round(self.hinges[0].position + n * d)
+                self.hinges[0].position = round(self.hinges[0].position + n * d, 1)
             if not hin2.is_fixed:
                 # noinspection PyTypeChecker
                 self.hinges[1].position = round(self.hinges[1].position - n * d, 1)
