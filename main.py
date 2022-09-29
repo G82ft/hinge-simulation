@@ -1,5 +1,8 @@
+"""Made by Leonid (https://github.com/G4m3_80ft)
+"""
 from math import cos, sin
-from tkinter import Tk, Canvas, Frame, Label, Entry, Checkbutton, Button, BooleanVar, StringVar
+from tkinter import (Tk, Canvas, Frame, Label, Entry, Checkbutton, Radiobutton, Button,
+                     IntVar, BooleanVar, StringVar)
 
 
 def bind_tree(widget, event_seq: str, callback):
@@ -89,6 +92,13 @@ class Vector:
 
         return self.values == other.values
 
+    def __round__(self, n_digits: int = None):
+        return Vector(
+            [
+                round(i, n_digits) for i in self.values
+            ]
+        )
+
     def copy(self):
         return Vector(self.values.copy())
 
@@ -116,6 +126,12 @@ class Hinge:
         if self.x_axis is not None and self.y_axis is not None:
             self.is_fixed: bool = True
             self.position = Vector([self.x_axis, self.y_axis])
+
+    def __str__(self):
+        return f'Hinge({self.position.values}) at {hex(id(self))}'
+
+    def __repr__(self):
+        return f'{self}'
 
     def update(self) -> None:
         if self.is_fixed:
@@ -145,6 +161,9 @@ class Link:
         self.length: float = length
         self.hinges: tuple[Hinge, Hinge] = hinges
 
+    def __eq__(self, other):
+        return self.hinges == other.hinges
+
     def update(self) -> None:
         hin1, hin2 = self.hinges
         axis: Vector = hin1.position - hin2.position
@@ -153,9 +172,11 @@ class Link:
             n: Vector = axis / dist
             d: float = self.length - dist
             if not hin1.is_fixed:
-                self.hinges[0].position += n * d
+                # noinspection PyTypeChecker
+                self.hinges[0].position = round(self.hinges[0].position + n * d)
             if not hin2.is_fixed:
-                self.hinges[1].position -= n * d
+                # noinspection PyTypeChecker
+                self.hinges[1].position = round(self.hinges[1].position - n * d, 1)
 
     def get_coords(self) -> list:
         return self.hinges[0].position.values + self.hinges[1].position.values
@@ -164,6 +185,7 @@ class Link:
 class Simulation:
     def __init__(self):
         self.hinges: dict[int: Hinge] = {}
+        self.links_d: dict = {}
         self.links: list = []
         self.links_id: list = []
 
@@ -173,7 +195,7 @@ class Simulation:
         temp_root.destroy()
 
     def update(self) -> None:
-        for L in self.links:
+        for L in self.links_d.values():
             L.update()
 
         for h in self.hinges.values():
@@ -182,18 +204,11 @@ class Simulation:
         return None
 
     def draw(self) -> None:
-        for l_id in self.links_id:
-            self.canvas.delete(l_id)
-
-        self.links_id.clear()
-
-        for L in self.links:
-            self.links_id.append(self.canvas.create_line(*L.get_coords(), width=1))
-            self.canvas.tag_lower(self.links_id[-1], tuple(self.hinges)[0])
+        for id_, link in self.links_d.items():
+            self.canvas.coords(id_, link.get_coords())
 
         for id_, hinge in self.hinges.items():
             self.canvas.moveto(id_, *hinge.screen_position[:2])
-            self.canvas.tag_raise(id_, self.links_id[-1])
 
         return None
 
@@ -203,12 +218,26 @@ class Simulation:
                 self.canvas.create_oval(*hin.screen_position, outline='black')
             ] = hin
 
+    def remove_hinge(self, hin_id: int):
+        if hin_id in self.hinges:
+            hinge = self.hinges[hin_id]
+
+            del self.hinges[hin_id]
+            self.canvas.delete(hin_id)
+
+            for id_, link in self.links_d.copy().items():
+                if hinge in link.hinges:
+                    del self.links_d[id_]
+                    self.canvas.delete(id_)
+
     def add_link(self, link: Link) -> None:
-        if link not in self.links:
+        if link not in self.links_d.values():
             for hin in link.hinges:
                 self.add_hinge(hin)
 
-            self.links.append(link)
+            self.links_d[
+                self.canvas.create_line(link.get_coords(), width=1)
+            ] = link
 
 
 class Root:
@@ -217,7 +246,7 @@ class Root:
         self.fps: float = fps
 
         self.root: Tk = Tk()
-        self.root.rowconfigure(0, weight=1)
+        self.root.rowconfigure(1, weight=1)
         self.root.columnconfigure(0, weight=1)
         self.x, self.y = 350, 360
         self.root.geometry(f'{self.x}x{self.y}')
@@ -225,10 +254,43 @@ class Root:
         self.root.title('Hinge simulation')
 
         sim.canvas = Canvas(self.root)
-        sim.canvas.grid(sticky='nesw')
+        sim.canvas.grid(row=1, column=0, sticky='nesw')
 
-        sim.canvas.bind('<Control-Motion>', self.move)
+        # GUI
+        # Toolbar
+        toolbar: Frame = Frame(
+            self.root,
+            bd=1,
+            relief='ridge'
+        )
+        toolbar.grid(row=0, column=0,
+                     columnspan=2,
+                     sticky='ew')
+        self.tool_id: IntVar = IntVar()
 
+        Radiobutton(
+            toolbar,
+            text='Select',
+            indicatoron=False,
+            variable=self.tool_id,
+            value=0
+        ).grid(row=0, column=0)
+        Radiobutton(
+            toolbar,
+            text='Hinge',
+            indicatoron=False,
+            variable=self.tool_id,
+            value=1
+        ).grid(row=0, column=1)
+        Radiobutton(
+            toolbar,
+            text='Link',
+            indicatoron=False,
+            variable=self.tool_id,
+            value=2
+        ).grid(row=0, column=2)
+
+        # Bottom check buttons
         self.is_running: BooleanVar = BooleanVar()
         self.is_running.set(True)
         acb = Checkbutton(
@@ -250,159 +312,205 @@ class Root:
             variable=self.trace_enabled
         ).grid(sticky='ew')
 
-        # Selection stuff
-        self.prev_id: int = 0
-        self.prev_color: str = '#fff'
-        sim.canvas.bind('<1>', self.update_id)
-
-        self.menu: Frame = Frame(
+        # Right menu setup
+        self.prev_info: list = [0, '#fff']
+        self.right_menu: Frame = Frame(
             self.root,
             bd=5,
             relief='ridge'
         )
 
-        menu_list: list = []
+        right_menu_list: list = []
         self.info: dict = {}
 
         left = Label(
-            self.menu,
+            self.right_menu,
             text='ID'
         )
         self.info["id"] = StringVar()
         self.info["id"].set(0)
         r = Label(
-            self.menu,
+            self.right_menu,
             textvariable=self.info["id"]
         )
-        menu_list.append((left, r))
+        right_menu_list.append((left, r))
 
         left = Label(
-            self.menu,
+            self.right_menu,
             text='X'
         )
         self.info["x"] = StringVar()
         r = Entry(
-            self.menu,
+            self.right_menu,
             width=5,
             textvariable=self.info["x"]
         )
-        menu_list.append((left, r))
+        right_menu_list.append((left, r))
 
         left = Label(
-            self.menu,
+            self.right_menu,
             text='Y'
         )
         self.info["y"] = StringVar()
         r = Entry(
-            self.menu,
+            self.right_menu,
             width=5,
             textvariable=self.info["y"]
         )
-        menu_list.append((left, r))
+        right_menu_list.append((left, r))
 
         left = Label(
-            self.menu,
+            self.right_menu,
             text='Fixed'
         )
         self.info["fixed"] = BooleanVar()
         r = Checkbutton(
-            self.menu,
+            self.right_menu,
             variable=self.info["fixed"]
         )
-        menu_list.append((left, r))
+        right_menu_list.append((left, r))
 
         left = Label(
-            self.menu,
+            self.right_menu,
             text='X axis'
         )
         self.info["x_axis"] = StringVar()
         r = Entry(
-            self.menu,
+            self.right_menu,
             width=5,
             textvariable=self.info["x_axis"]
         )
-        menu_list.append((left, r))
+        right_menu_list.append((left, r))
 
         left = Label(
-            self.menu,
+            self.right_menu,
             text='Y axis'
         )
         self.info["y_axis"] = StringVar()
         r = Entry(
-            self.menu,
+            self.right_menu,
             width=5,
             textvariable=self.info["y_axis"]
         )
-        menu_list.append((left, r))
+        right_menu_list.append((left, r))
 
-        for i, (r, left) in enumerate(menu_list):
+        for i, (r, left) in enumerate(right_menu_list):
             r.grid(row=i, column=0)
             left.grid(row=i, column=1)
-            self.menu.rowconfigure(i, weight=1)
+            self.right_menu.rowconfigure(i, weight=1)
 
         Button(
-            self.menu,
+            self.right_menu,
             text='Apply',
             command=self.configure
         ).grid(columnspan=2)
         # Adjusting menu width
         Label(
-            self.menu,
+            self.right_menu,
             width=12,
             height=0
         ).grid(columnspan=2,
                sticky='s')
 
-        self.menu.grid(row=0, column=1,
-                       rowspan=3,
-                       sticky='ns')
+        self.right_menu.grid(row=1, column=1,
+                             rowspan=3,
+                             sticky='ns')
         self.root.update()
-        self.menu_width: int = self.menu.winfo_width()
-        self.menu.grid_forget()
+        self.menu_width: int = self.right_menu.winfo_width()
+        self.right_menu.grid_forget()
 
-        bind_tree(self.menu, '<Any-Button>', lambda e: self.is_running.set(False))
-        bind_tree(self.menu, '<Any-Key>', lambda e: self.is_running.set(False))
+        # Bindings
+        self.root.bind_all('<space>', lambda e: self.is_running.set(not self.is_running.get()))
+        self.root.bind_all('<Control-space>', lambda e: self.trace_enabled.set(not self.trace_enabled.get()))
+        self.root.bind_all('<KeyRelease-Delete>', self.delete, add='+')
+        self.root.bind_all('<KeyRelease-BackSpace>', self.delete)
 
-    def summon_menu(self):
-        self.menu.grid(row=0, column=1,
-                       rowspan=3,
-                       sticky='ns')
+        sim.canvas.bind('<ButtonRelease-1>', self.handle_click)
+        sim.canvas.bind('<Control-Motion>', self.move)
+
+        bind_tree(self.right_menu, '<Any-Button>', lambda e: self.is_running.set(False))
+        bind_tree(self.right_menu, '<Any-Key>', lambda e: self.is_running.set(False))
+
+    def summon_menu(self) -> None:
+        self.right_menu.grid(row=1, column=1,
+                             rowspan=3,
+                             sticky='ns')
         self.root.geometry(f'{self.x + self.menu_width}x{self.y}')
 
-    def hide_menu(self):
-        self.root.geometry(f'{self.x}x{self.y}')
-        self.menu.grid_forget()
+        return None
 
-    def update_id(self, event):
-        if self.prev_id in self.sim.hinges:
+    def hide_menu(self) -> None:
+        self.root.geometry(f'{self.x}x{self.y}')
+        self.right_menu.grid_forget()
+
+    def handle_click(self, event) -> None:
+        match self.tool_id.get():
+            case 0:
+                self.select(event)
+            case 1:
+                self.create_hinge(event)
+            case 2:
+                self.link_hinges(event)
+            case _:
+                return None
+
+    def find_hinge(self, event) -> int:
+        hin_id: int = 0
+        for hin_id in self.sim.canvas.find_enclosed(event.x - 25, event.y - 25, event.x + 25, event.y + 25)[::-1]:
+            if hin_id in self.sim.hinges:
+                break
+
+        return hin_id
+
+    def select(self, event) -> None:
+        if self.prev_info[0] in self.sim.hinges:
             self.sim.canvas.itemconfig(
-                self.prev_id,
-                outline=self.prev_color
+                self.prev_info[0],
+                outline=self.prev_info[1]
             )
             self.hide_menu()
 
-        try:
-            id_: int = self.sim.canvas.find_enclosed(event.x - 25, event.y - 25, event.x + 25, event.y + 25)[0]
-        except IndexError:
+        hin_id: int = self.find_hinge(event)
+        if hin_id == 0:
             self.info["id"].set('0')
-            self.update_pos()
             return None
 
-        if id_ in self.sim.hinges:
-            self.info["id"].set(id_)
-            self.update_pos()
-            self.update_info()
-            self.summon_menu()
+        self.info["id"].set(hin_id)
+        self.update_pos()
+        self.update_info()
+        self.summon_menu()
 
-            self.prev_id = id_
-            self.prev_color = self.sim.canvas.itemcget(id_, 'outline')
+        self.prev_info = [hin_id, self.sim.canvas.itemcget(hin_id, 'outline')]
 
-            self.sim.canvas.itemconfig(id_, outline='#0ff')
-        else:
-            self.info["id"].set('0')
-            self.update_pos()
+        self.sim.canvas.itemconfig(hin_id, outline='#0ff')
 
-    def update_pos(self):
+    def create_hinge(self, event) -> None:
+        hinge: Hinge = Hinge(Vector([event.x, event.y]))
+        self.sim.add_hinge(hinge)
+        self.sim.draw()
+        self.select(event)
+
+        return None
+
+    def link_hinges(self, event) -> None:
+        if self.prev_info[0] not in self.sim.hinges:
+            return None
+
+        hin_id: int = self.find_hinge(event)
+        if hin_id == 0:
+            return None
+
+        hin1: Hinge = self.sim.hinges[self.prev_info[0]]
+        hin2: Hinge = self.sim.hinges[hin_id]
+
+        self.sim.add_link(
+            Link(
+                abs((hin1.position - hin2.position).length),
+                (hin1, hin2)
+            )
+        )
+
+    def update_pos(self) -> None:
         hin_id: int = int(self.info["id"].get())
         if hin_id in self.sim.hinges:
             x, y = [
@@ -411,7 +519,7 @@ class Root:
             self.info["x"].set(x)
             self.info["y"].set(y)
 
-    def update_info(self):
+    def update_info(self) -> None:
         hin_id: int = int(self.info["id"].get())
         if hin_id in self.sim.hinges:
             h: Hinge = self.sim.hinges[hin_id]
@@ -429,7 +537,16 @@ class Root:
             self.sim.update()
             self.update_pos()
 
-    def configure(self, *_):
+    def delete(self, event) -> None:
+        if isinstance(event.widget, Entry):
+            return None
+
+        hin_id: int = int(self.info["id"].get())
+        if hin_id in self.sim.hinges:
+            self.sim.remove_hinge(hin_id)
+        self.hide_menu()
+
+    def configure(self, *_) -> None:
         self.is_running.set(False)
 
         hinge: Hinge = self.sim.hinges[int(self.info["id"].get())]
@@ -464,7 +581,7 @@ class Root:
         hinge.x_axis = hinge_info["x_axis"]
         hinge.y_axis = hinge_info["y_axis"]
 
-    def mainloop(self):
+    def mainloop(self) -> None:
         i = 0
 
         ids = []
@@ -508,53 +625,26 @@ class Root:
             self.sim.draw()
 
 
-so = Simulation()
-root = Root(so, 60)
+if __name__ == '__main__':
+    so = Simulation()
+    root = Root(so, 60)
 
-hin_1 = Hinge(
-    Vector([60, 100]),
-    is_fixed=True
-)
-hin_2 = Hinge(
-    Vector([60, 50])
-)
-hin3 = Hinge(
-    Vector([160, 50])
-)
-hin4 = Hinge(
-    Vector([210, 100]),
-    y_axis=100
-)
-
-links = [
-    Link(
-        50,
-        (hin_1, hin_2)
-    ),
-    Link(
-        100,
-        (hin_2, hin3)
-    ),
-    Link(
-        100,
-        (hin3, hin4)
+    hin_1 = Hinge(
+        Vector([60, 100]),
+        is_fixed=True
     )
-]
+    hin_2 = Hinge(
+        Vector([60, 50])
+    )
+    hin3 = Hinge(
+        Vector([160, 50])
+    )
+    hin4 = Hinge(
+        Vector([210, 100]),
+        y_axis=100
+    )
 
-hin_1 = Hinge(
-    Vector([60, 210]),
-    is_fixed=True
-)
-hin_2 = Hinge(
-    Vector([60, 160])
-)
-hin3 = Hinge(
-    Vector([210, 210]),
-    y_axis=210
-)
-
-links.extend(
-    [
+    links = [
         Link(
             50,
             (hin_1, hin_2)
@@ -562,11 +652,39 @@ links.extend(
         Link(
             100,
             (hin_2, hin3)
+        ),
+        Link(
+            100,
+            (hin3, hin4)
         )
     ]
-)
 
-for link_ in links:
-    so.add_link(link_)
+    hin_1 = Hinge(
+        Vector([60, 210]),
+        is_fixed=True
+    )
+    hin_2 = Hinge(
+        Vector([60, 160])
+    )
+    hin3 = Hinge(
+        Vector([210, 210]),
+        y_axis=210
+    )
 
-root.mainloop()
+    links.extend(
+        [
+            Link(
+                50,
+                (hin_1, hin_2)
+            ),
+            Link(
+                100,
+                (hin_2, hin3)
+            )
+        ]
+    )
+
+    for link_ in links:
+        so.add_link(link_)
+
+    root.mainloop()
